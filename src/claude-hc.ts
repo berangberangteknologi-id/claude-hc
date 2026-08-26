@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 // claude-hc — headless Claude Code, but AskUserQuestion actually works
-// (the agent can pause mid-task, ask you a clarifying question over the
-// terminal, and continue once you answer — instead of silently guessing,
-// which is what plain `claude -p` does).
+// (the agent can ask you a clarifying question instead of silently
+// guessing, which is what plain `claude -p` does).
+//
+// Every invocation is one-shot, same as `-p`: it prints text and exits.
+// That includes clarifying questions — a question is just another piece of
+// text output, and answering it means running claude-hc again with -r
+// <session_id> and the answer as the new prompt. There is no mode where the
+// process stays alive waiting for input.
 //
 // Run `claude-hc --help` for the full option list.
 //
@@ -28,7 +33,6 @@
 
 import { query, type SDKMessage, type CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import type { AskUserQuestionInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
-import * as readline from "node:readline/promises";
 import { spawn } from "node:child_process";
 
 const DEFAULT_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
@@ -37,8 +41,8 @@ const DEFAULT_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
 // environment stripped of CLAUDE_CODE_* variables, so that query() inside it
 // is not recognized as a "child" of whatever live Claude Code session called
 // it (e.g. via its Bash tool) — separate, not nested. stdio stays 'inherit'
-// (same terminal) so AskUserQuestion is still interactive without needing a
-// new window. Guarded by CLAUDE_HC_DETACHED so it only re-execs once.
+// (same terminal) so output streams normally without needing a new window.
+// Guarded by CLAUDE_HC_DETACHED so it only re-execs once.
 const DETACH_MARKER = "CLAUDE_HC_DETACHED";
 const ENV_VARS_TO_STRIP = [
   "CLAUDECODE",
@@ -105,20 +109,20 @@ NOTES:
     tool NOT in --allowed-tools can still run without ever going through the
     permission check here. If you need a tool truly blocked, use
     --disallowed-tools — that one was confirmed to be honored in testing.
-  - When the agent needs clarification, it pauses and waits for an answer on
-    stdin — a real TTY or an open pipe/FIFO both work (e.g. 'tail -f
-    answers.txt | claude-hc ...'), it doesn't have to be an actual terminal.
-    The only thing that gets auto-denied is a stdin that has ALREADY ended
-    (e.g. because the prompt itself was sent via stdin and consumed it) — at
-    that point there is genuinely no way left to wait for an answer.
+  - Every invocation is one-shot: claude-hc prints text and exits, the same
+    shape whether that text is a normal answer or a clarifying question. When
+    the agent calls AskUserQuestion, the question and its options are printed
+    and the call is denied (with a message telling the model the question has
+    already been shown and it should end its turn) — the process then exits
+    normally, same as any other response. To answer, run claude-hc again with
+    -r <session_id> and your answer as the new prompt.
   - session_id is printed to stderr at the end so it can be used with -r.
     An explicit session_id is the only way to continue a session — this
     avoids ever guessing "the most recent session", which is inherently
     ambiguous when multiple Claude Code sessions share a working directory.
   - claude-hc always re-execs itself once as a child process with the
     environment stripped of CLAUDE_CODE_* variables, so it isn't recognized
-    as a "child" of any live Claude Code session that invoked it. stdio stays
-    in the same terminal (no new window is opened).`;
+    as a "child" of any live Claude Code session that invoked it.`;
 
 interface Args {
   prompt: string | undefined;
@@ -185,78 +189,39 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8").trim();
 }
 
-function makeAskUserQuestionHandler(rl: readline.Interface) {
-  return async (input: AskUserQuestionInput) => {
-    // We check readableEnded/destroyed, not isTTY: a non-TTY stdin
-    // (pipe/FIFO) is still perfectly valid to wait on — readline.question()
-    // just waits for the next line, whether it comes from a TTY or a pipe.
-    // What genuinely means "no answer is ever coming" is stdin that has
-    // ALREADY ended — that happens when the prompt itself was sent via
-    // stdin (consuming it) or when the writer on the other end of a
-    // pipe/FIFO has closed its connection.
-    if (process.stdin.readableEnded || process.stdin.destroyed) {
-      console.error(
-        "\n[claude-hc] The agent asked a clarifying question via AskUserQuestion, but " +
-          "stdin has already ended/closed (likely because the prompt itself was sent via " +
-          "stdin and consumed it), so there's no way left to wait for an answer. Denying " +
-          "this request.\n",
-      );
-      return {
-        behavior: "deny" as const,
-        message: "stdin already ended — no way to read an answer for AskUserQuestion.",
-      };
-    }
-
-    const answers: Record<string, string> = {};
-
-    for (const q of input.questions) {
-      console.log(`\n${q.header ? `[${q.header}] ` : ""}${q.question}`);
-      q.options.forEach((opt, idx) => {
-        console.log(`  ${idx + 1}. ${opt.label}${opt.description ? ` — ${opt.description}` : ""}`);
-      });
-
-      const raw = await rl.question(
-        q.multiSelect
-          ? "Pick a number (comma-separated), or type a free-text answer: "
-          : "Pick a number, or type a free-text answer: ",
-      );
-
-      const picked = raw
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .map((token) => {
-          const idx = Number(token) - 1;
-          return Number.isInteger(idx) && q.options[idx] ? q.options[idx].label : token;
-        });
-
-      answers[q.question] = picked.join(", ");
-    }
-
-    return {
-      behavior: "allow" as const,
-      updatedInput: { questions: input.questions, answers },
-    };
-  };
+function printAskUserQuestion(input: AskUserQuestionInput): void {
+  for (const q of input.questions) {
+    console.log(`\n${q.header ? `[${q.header}] ` : ""}${q.question}`);
+    q.options.forEach((opt, idx) => {
+      console.log(`  ${idx + 1}. ${opt.label}${opt.description ? ` — ${opt.description}` : ""}`);
+    });
+  }
 }
 
-function makeCanUseTool(rl: readline.Interface): CanUseTool {
-  const askUserQuestion = makeAskUserQuestionHandler(rl);
-
-  return async (toolName, input) => {
-    if (toolName === "AskUserQuestion") {
-      return askUserQuestion(input as unknown as AskUserQuestionInput);
-    }
-    // Tools actually in --allowed-tools are bare-listed, so the SDK
-    // auto-approves them and never invokes this callback for them at all.
-    // Reaching this branch means toolName was NOT in --allowed-tools —
-    // deny it, matching `-p` semantics (only explicitly allowed tools run).
+const canUseTool: CanUseTool = async (toolName, input) => {
+  if (toolName === "AskUserQuestion") {
+    // Print the question the same way we always have, but don't block
+    // waiting for a reply here — deny immediately so this turn ends and
+    // claude-hc exits normally, same as any plain-text response. The answer
+    // comes back as a new prompt in a follow-up invocation with -r.
+    printAskUserQuestion(input as unknown as AskUserQuestionInput);
     return {
       behavior: "deny",
-      message: `Tool "${toolName}" is not in --allowed-tools.`,
+      message:
+        "This question has already been shown to the user as text output. Do not retry " +
+        "it or rephrase it — just end your turn now. The user's answer will arrive as a " +
+        "new message when they resume this session.",
     };
+  }
+  // Tools actually in --allowed-tools are bare-listed, so the SDK
+  // auto-approves them and never invokes this callback for them at all.
+  // Reaching this branch means toolName was NOT in --allowed-tools —
+  // deny it, matching `-p` semantics (only explicitly allowed tools run).
+  return {
+    behavior: "deny",
+    message: `Tool "${toolName}" is not in --allowed-tools.`,
   };
-}
+};
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -293,12 +258,6 @@ async function main() {
     process.exit(1);
   }
 
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  process.on("SIGINT", () => {
-    rl.close();
-    process.exit(130);
-  });
-
   // AskUserQuestion is deliberately NOT included in allowedTools: the SDK
   // auto-approves (and skips canUseTool for) any tool name that's bare-listed
   // there. By leaving it out of allowedTools/disallowedTools, calls to this
@@ -317,7 +276,7 @@ async function main() {
         ...(args.model ? { model: args.model } : {}),
         ...(args.maxTurns !== undefined ? { maxTurns: args.maxTurns } : {}),
         ...(args.resumeId ? { resume: args.resumeId } : {}),
-        canUseTool: makeCanUseTool(rl),
+        canUseTool,
       },
     }) as AsyncIterable<SDKMessage>;
 
@@ -345,7 +304,6 @@ async function main() {
     exitCode = 1;
   } finally {
     if (sessionId) console.error(`[claude-hc] session_id: ${sessionId}`);
-    rl.close();
   }
 
   process.exit(exitCode);

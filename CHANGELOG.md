@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-08-26
+
+### Changed
+
+- **Breaking:** `AskUserQuestion` no longer blocks waiting for an answer on
+  stdin within the same invocation. The question and its options are still
+  printed, but the tool call is now denied immediately (with a message
+  telling the model to end its turn), so the process exits normally — the
+  same shape as any other response. This makes every invocation uniformly
+  one-shot: it always prints text and exits, whether that text is a final
+  answer or a clarifying question. To answer, run `claude-hc` again with
+  `-r <session_id>` and the answer as the new prompt, exactly like
+  continuing past a plain-text question.
+- Removed the `readline`-based interactive prompt and the stdin
+  `readableEnded`/`isTTY` handling that existed to support it — no longer
+  needed now that nothing blocks on stdin for an answer.
+
+[0.2.0]: https://github.com/berangberangteknologi-id/claude-hc/compare/v0.1.1...v0.2.0
+
 ## [0.1.1] - 2026-08-26
 
 ### Fixed

@@ -5,10 +5,12 @@ Headless Claude Code that can still ask clarifying questions.
 Plain `claude -p` runs non-interactively and never pauses to ask you
 anything — it just guesses and moves on. `claude-hc` is a thin wrapper
 around the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)
-that wires up the `AskUserQuestion` tool properly, so the agent can stop
-mid-task, ask you something over the terminal (or a pipe), and continue
-once you answer — while everything else behaves like `-p`: one-shot
-invocation, tools you allow run without prompting, and it exits when done.
+that wires up the `AskUserQuestion` tool properly, so a clarifying question
+actually reaches you instead of being silently denied — while every
+invocation stays one-shot, exactly like `-p`: it prints text and exits, and
+a question is just another piece of text output. Answering one means
+running claude-hc again with `-r <session_id>` and your answer as the new
+prompt.
 
 ## Install
 
@@ -44,9 +46,10 @@ claude-hc "prompt text" [options]
 echo "prompt text" | claude-hc [options]
 ```
 
-It's a one-shot invocation: `claude-hc` runs the prompt to completion
-(pausing for any clarifying questions along the way), prints the result, and
-exits — same shape as `claude -p`, just interactive when it needs to be.
+Every invocation is one-shot: `claude-hc` runs the prompt, prints text, and
+exits — same shape as `claude -p`. If the agent needs to ask you something,
+the question is printed as part of that output and the process still exits;
+there's no invocation that stays running waiting for input.
 
 ### Examples
 
@@ -63,21 +66,22 @@ claude-hc "now also add a test for that" -r <session_id>
 
 ### Answering questions programmatically
 
-Because `claude-hc` just waits on stdin for an answer, you don't need a real
-terminal to drive it — any process that can write lines to a pipe works.
-This is the pattern for orchestrating it from a script or another agent:
+Because every invocation just runs once and exits, orchestrating `claude-hc`
+from a script or another agent is a plain request/response loop — no pipes,
+no background processes, no long-lived state to manage:
 
 ```bash
-touch answers.txt
-tail -f answers.txt | claude-hc "build me a small app" --allowed-tools Read,Write,Edit,Bash > output.log 2>&1 &
+out=$(claude-hc "build me a small app" --allowed-tools Read,Write,Edit,Bash 2>/tmp/stderr.log)
+session_id=$(grep -o 'session_id: .*' /tmp/stderr.log | cut -d' ' -f2)
+echo "$out"
 
-# whenever output.log shows a question, append your answer:
-echo "1" >> answers.txt
+# if $out is a question, decide an answer and run again with -r:
+claude-hc "1" -r "$session_id" --allowed-tools Read,Write,Edit,Bash
 ```
 
-`claude-hc` only refuses to wait when stdin has genuinely already ended
-(e.g. the prompt itself was piped in and consumed it) — there's no other
-special "interactive mode" to opt into.
+In practice: run it, read the output, and if it's a question, run it again
+with `-r <session_id>` and your answer as the new prompt. Repeat until
+you're done — there's no special "interactive mode" to opt into or out of.
 
 ## CLI reference
 
@@ -99,10 +103,12 @@ directory, so that mode isn't offered at all.
 
 - **`AskUserQuestion`**: this is a built-in Claude Code tool, but by default
   the SDK denies it unless a host app supplies a `canUseTool` callback that
-  actually surfaces the question and returns an answer. `claude-hc`'s
-  callback does exactly that: it prints the question and options, blocks on
-  `readline.question()` for a reply on stdin, and feeds the answer back to
-  the agent so it can continue the same task.
+  actually surfaces the question. `claude-hc`'s callback prints the question
+  and its options, then denies the call with a message telling the model the
+  question has already been shown and it should end its turn — the process
+  then exits normally, exactly like any other response. This keeps the
+  output shape uniform: every invocation prints text and exits, whether that
+  text happens to be an answer or a question.
 - **Tool auto-approval**: tools listed in `--allowed-tools` are bare-listed
   to the SDK, which auto-approves them without ever invoking the callback —
   this is what keeps `claude-hc` non-interactive for everything except
@@ -131,12 +137,6 @@ directory, so that mode isn't offered at all.
   isolation, behavior (available tools, default model, permission mode) can
   vary based on your global/project Claude Code configuration, not just the
   flags you pass to `claude-hc`.
-- **A plain-text clarifying question ends the turn.** `AskUserQuestion` calls
-  pause and resume within a single invocation. But some skills/flows ask for
-  approval as ordinary conversational text instead of an `AskUserQuestion`
-  call (e.g. "does this design look right?") — that ends the turn like any
-  other response, and continuing requires a new `claude-hc` invocation with
-  `-r <session_id>`.
 
 ## Changelog
 
