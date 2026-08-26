@@ -138,6 +138,10 @@ directory, so that mode isn't offered at all.
   other response, and continuing requires a new `claude-hc` invocation with
   `-r <session_id>`.
 
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md).
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
