@@ -1,6 +1,6 @@
 {
   "name": "claude-hc",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Headless Claude Code that can still ask clarifying questions mid-task, instead of silently guessing.",
   "keywords": [
     "claude",

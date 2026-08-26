@@ -207,10 +207,7 @@ const canUseTool: CanUseTool = async (toolName, input) => {
     printAskUserQuestion(input as unknown as AskUserQuestionInput);
     return {
       behavior: "deny",
-      message:
-        "This question has already been shown to the user as text output. Do not retry " +
-        "it or rephrase it — just end your turn now. The user's answer will arrive as a " +
-        "new message when they resume this session.",
+      message: "Already shown to the user above — their reply will be your next message. End your turn now.",
     };
   }
   // Tools actually in --allowed-tools are bare-listed, so the SDK

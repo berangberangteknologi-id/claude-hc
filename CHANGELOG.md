@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-08-26
+
+### Changed
+
+- Shortened the message sent back to the model when denying an
+  `AskUserQuestion` call, to reduce how much it adds to the conversation
+  transcript. It still explicitly tells the model its answer is coming as a
+  follow-up message (not that the conversation is over), so the model's own
+  brief acknowledgment stays accurate. (An `interrupt: true` deny was tried
+  to suppress that acknowledgment entirely, but it made the turn end with
+  `result.subtype: "error_during_execution"` instead of `"success"` — every
+  question would then look like a failure to a caller checking the exit
+  code, so it wasn't used.)
+
+[0.2.1]: https://github.com/berangberangteknologi-id/claude-hc/compare/v0.2.0...v0.2.1
+
 ## [0.2.0] - 2026-08-26
 
 ### Changed
