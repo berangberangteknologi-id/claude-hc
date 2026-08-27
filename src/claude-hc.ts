@@ -262,6 +262,7 @@ async function main() {
   const allowedTools = args.allowedTools.filter((t) => t !== "AskUserQuestion");
 
   let sessionId: string | undefined;
+  let sawResult = false;
   let exitCode = 0;
 
   try {
@@ -289,12 +290,30 @@ async function main() {
           }
         }
       } else if (message.type === "result") {
+        sawResult = true;
         process.stdout.write("\n");
         if (message.subtype !== "success") {
           console.error(`[claude-hc] stopped: ${message.subtype}`);
           exitCode = 1;
         }
       }
+    }
+
+    // The SDK's async iterable can complete without ever yielding a `result`
+    // message — observed in the field during long tool calls with no output
+    // (root cause unconfirmed; possibly an idle timeout upstream of the SDK
+    // dropping the connection mid-turn, see README). No exception is thrown
+    // in that case, so without this check the loop above would just exit
+    // silently with exitCode still at 0 — indistinguishable from a real
+    // success. Surface it as a distinct, non-zero exit code instead.
+    if (!sawResult) {
+      console.error(
+        "[claude-hc] the session ended without a result message — the turn's actual " +
+          "outcome is unknown (possibly killed mid-turn during a long silent tool call; " +
+          "see README's Known limitations). Re-run with -r to see if the session can " +
+          "still be resumed.",
+      );
+      exitCode = 2;
     }
   } catch (err) {
     console.error("[claude-hc] error:", err);

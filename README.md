@@ -99,6 +99,14 @@ There is no "resume last session" flag — `-r` always takes an explicit
 ambiguous when more than one Claude Code session shares a working
 directory, so that mode isn't offered at all.
 
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success. |
+| `1` | The agent's turn ended in a non-success result (e.g. hit `--max-turns`), or claude-hc itself threw an error. |
+| `2` | The session ended without ever producing a result message — the turn's actual outcome is unknown. See [Known limitations](#known-limitations). |
+
 ## How it works
 
 - **`AskUserQuestion`**: this is a built-in Claude Code tool, but by default
@@ -137,6 +145,28 @@ directory, so that mode isn't offered at all.
   isolation, behavior (available tools, default model, permission mode) can
   vary based on your global/project Claude Code configuration, not just the
   flags you pass to `claude-hc`.
+- **A long tool call with no output can silently end the session.** Reported
+  from real-world use: on a long-running tool call that produces no
+  streaming output for a while, the SDK's stream can complete without ever
+  emitting a `result` message — no exception, no error, just an iterator
+  that ends. The root cause is unconfirmed (candidates include an idle
+  timeout somewhere upstream of the SDK, e.g. an HTTP/2 or proxy timeout,
+  dropping the connection mid-turn); the SDK's wire protocol does have a
+  keep-alive message for long silent operations, so this looks like
+  something failing to respect it rather than an inherent SDK limit. As of
+  `v0.3.0`, claude-hc detects this and exits `2` instead of silently
+  returning `0` (see [Exit codes](#exit-codes)) — that only makes the
+  failure visible, it doesn't prevent it. If you have a task that includes a
+  long, quiet tool call, prefer having the agent launch it in the background
+  and end its turn immediately, then resume with `-r` once it's done —
+  reported to avoid the issue entirely. Attempts to reproduce it on demand
+  with a plain `sleep` were blocked by Claude Code's own sandbox (bare waits
+  with no real condition are flagged and pushed toward
+  `run_in_background`/`Monitor`), which suggests the real trigger is a
+  legitimate long-running, silent command (a build, a large download, a
+  heavy computation) rather than an artificial wait — that sandbox guard
+  isn't a workaround for this issue, it just happened to block every attempt
+  to force it on demand.
 
 ## Changelog
 

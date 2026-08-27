@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-08-27
+
+### Added
+
+- New exit code `2`: the SDK's stream can complete without ever emitting a
+  `result` message — reported from real-world use, correlated with a long
+  tool call that produces no output for a while. No exception is thrown when
+  this happens, so previously the loop just exited with `exitCode` still at
+  its default of `0`, indistinguishable from a real success. claude-hc now
+  tracks whether a `result` message was seen and exits `2` instead if not,
+  so the failure is visible to a caller instead of silently reading as
+  success. Root cause is unconfirmed (candidates include an idle timeout
+  upstream of the SDK dropping the connection mid-turn) — this only adds
+  observability, it doesn't fix or prevent the underlying issue. See
+  [Known limitations](./README.md#known-limitations) for what's confirmed,
+  what isn't, and the reported workaround (background long, quiet tool
+  calls and resume with `-r` instead of waiting on them in the same turn).
+- Documented all exit codes (`0`/`1`/`2`) in the README.
+
+[0.3.0]: https://github.com/berangberangteknologi-id/claude-hc/compare/v0.2.1...v0.3.0
+
 ## [0.2.1] - 2026-08-26
 
 ### Changed
