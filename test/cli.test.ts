@@ -9,6 +9,20 @@ import { SessionStore } from "../src/session-store.js";
 import { askInput, makeFakeQuery } from "./helpers/fake-query.js";
 import type { FakeStep } from "./helpers/fake-query.js";
 
+/**
+ * A SessionStore rooted at a *file* (not a directory) so any attempt to
+ * create a session directory under it fails with a real, deterministic,
+ * cross-platform ENOTDIR — exercising the same "filesystem error escapes
+ * runTurn's lock acquisition" path as a broken CLAUDE_HC_HOME in production,
+ * without depending on a platform-specific path like /dev/null/nope.
+ */
+function brokenHomeStore(): SessionStore {
+  const dir = mkdtempSync(join(tmpdir(), "claude-hc-cli-broken-"));
+  const blocker = join(dir, "blocker");
+  writeFileSync(blocker, "x");
+  return new SessionStore(blocker);
+}
+
 function deps(steps: FakeStep[] = [], stdin = ""): MainDeps & { out: string[]; err: string[] } {
   const out: string[] = [];
   const err: string[] = [];
@@ -150,4 +164,23 @@ test("main: a text turn streams and returns no last line", async () => {
   assert.equal(r.code, 0);
   assert.equal(r.lastLine, undefined);
   assert.ok(d.out.join("").includes("[Color] Which color?"));
+});
+
+test("main: an exception during lock acquisition still prints a JSON error line in --json mode", async () => {
+  const d = deps();
+  d.store = brokenHomeStore();
+  const r = await main(["--json", "-r", "some-session", "hi"], d);
+  assert.equal(r.code, 1);
+  const parsed = JSON.parse(r.lastLine ?? "{}");
+  assert.equal(parsed.error.code, "exception");
+  assert.equal(parsed.turn, null);
+  assert.equal(parsed.result_file, null);
+});
+
+test("main: the same exception in text mode returns { code: 1 } with no last line", async () => {
+  const d = deps();
+  d.store = brokenHomeStore();
+  const r = await main(["-r", "some-session", "hi"], d);
+  assert.equal(r.code, 1);
+  assert.equal(r.lastLine, undefined);
 });

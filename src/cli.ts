@@ -2,7 +2,7 @@ import { buildJsonLine } from "./output.js";
 import { runTurn } from "./run.js";
 import type { QueryFn, TurnDeps } from "./run.js";
 import type { SessionStore } from "./session-store.js";
-import type { TurnResult } from "./types.js";
+import type { ErrorCode, TurnResult } from "./types.js";
 
 export const DEFAULT_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
 export const DEFAULT_WAIT_TIMEOUT_S = 170;
@@ -172,30 +172,43 @@ const USAGE_LINE =
   'Usage: claude-hc "prompt" [-r <session_id>] [--json] [--cwd <dir>] [--allowed-tools a,b,c] ' +
   "[--model name] [--max-turns n] | claude-hc status <id> | claude-hc wait <id> [--timeout s]";
 
+function jsonErrorLine(code: ErrorCode, message: string, sessionId: string | null = null): string {
+  const result: TurnResult = {
+    claude_hc: 1,
+    status: "error",
+    turn: null,
+    summary: "",
+    questions: [],
+    result_subtype: null,
+    exit_code: 1,
+    error: { code, message },
+    session_id: sessionId,
+    result_file: null,
+  };
+  return buildJsonLine(result);
+}
+
 function usageResult(json: boolean, messages: string[], stderr: (c: string) => void): MainResult {
   const message = messages.join("; ");
-  if (json) {
-    const result: TurnResult = {
-      claude_hc: 1,
-      status: "error",
-      turn: null,
-      summary: "",
-      questions: [],
-      result_subtype: null,
-      exit_code: 1,
-      error: { code: "usage", message },
-      session_id: null,
-      result_file: null,
-    };
-    return { code: 1, lastLine: buildJsonLine(result) };
-  }
+  if (json) return { code: 1, lastLine: jsonErrorLine("usage", message) };
   stderr(`${message}\n${USAGE_LINE}\nRun \`claude-hc --help\` for details.\n`);
   return { code: 1 };
 }
 
 export async function main(argv: string[], deps: MainDeps): Promise<MainResult> {
   const args = parseArgs(argv);
+  try {
+    return await runMain(args, deps);
+  } catch (err) {
+    const stackOrMessage = err instanceof Error && err.stack ? err.stack : String(err);
+    deps.stderr(`[claude-hc] error: ${stackOrMessage}\n`);
+    if (!args.json) return { code: 1 };
+    const message = err instanceof Error ? err.message : String(err);
+    return { code: 1, lastLine: jsonErrorLine("exception", message) };
+  }
+}
 
+async function runMain(args: ParsedArgs, deps: MainDeps): Promise<MainResult> {
   if (args.command === "help") {
     deps.stdout(HELP_TEXT + "\n");
     return { code: 0 };

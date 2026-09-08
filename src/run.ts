@@ -51,7 +51,6 @@ interface ResultLike {
   session_id: string;
   num_turns?: number;
   total_cost_usd?: number;
-  duration_ms?: number;
 }
 
 function busyResult(sessionId: string, pid: number, startedAt: string): TurnResult {
@@ -147,7 +146,7 @@ export async function runTurn(params: TurnParams, deps: TurnDeps): Promise<TurnR
       } else if (message.type === "result") {
         const result = message as unknown as ResultLike;
         sawResult = true;
-        resultSubtype = result.subtype;
+        resultSubtype = typeof result.subtype === "string" ? result.subtype : null;
         numTurns = typeof result.num_turns === "number" ? result.num_turns : null;
         totalCostUsd = typeof result.total_cost_usd === "number" ? result.total_cost_usd : null;
         if (!params.jsonMode) deps.stdout("\n");
@@ -164,7 +163,7 @@ export async function runTurn(params: TurnParams, deps: TurnDeps): Promise<TurnR
       error = { code: "no_result_message", message: "the session ended without a result message" };
     }
   } catch (err) {
-    deps.stderr(`[claude-hc] error: ${String(err)}\n`);
+    deps.stderr(`[claude-hc] error: ${err instanceof Error && err.stack ? err.stack : String(err)}\n`);
     exitCode = 1;
     error = { code: "exception", message: err instanceof Error ? err.message : String(err) };
   } finally {

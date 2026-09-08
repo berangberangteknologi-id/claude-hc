@@ -65,4 +65,18 @@ echo "turn 2: exit=$CODE line=$LINE2"
 [ -f "$CLAUDE_HC_HOME/sessions/$SESSION/turn-0002.json" ] || fail "turn-0002.json missing"
 [ ! -f "$CLAUDE_HC_HOME/sessions/$SESSION/lock" ] || fail "lock left behind"
 
+# session_busy: a fake live lock (this shell's own pid, so it reads as
+# alive) must make a resume attempt exit 3 with error.code session_busy.
+# No Claude call and no network needed.
+echo "{\"pid\": $$, \"started_at\": \"now\", \"turn\": 99}" > "$CLAUDE_HC_HOME/sessions/$SESSION/lock"
+
+$BIN --json -r "$SESSION" "should not run" > "$WORK/out3.txt" 2> "$WORK/err3.txt" &
+PID=$!
+wait "$PID" && CODE=0 || CODE=$?
+LINE3="$(tail -n 1 "$WORK/out3.txt")"
+echo "busy check: exit=$CODE line=$LINE3"
+[ "$CODE" = "3" ] || fail "busy check exit code $CODE"
+[ "$(echo "$LINE3" | jq -r .error.code)" = "session_busy" ] || fail "busy check error code"
+rm -f "$CLAUDE_HC_HOME/sessions/$SESSION/lock"
+
 echo "hermes-sim: PASS (session $SESSION)"
