@@ -107,7 +107,7 @@ a worker, so poll; block the card when the human must decide.
    - `status: "exited"`: continue.
 4. Take the last line of `output` and parse it as JSON. If it is not a
    complete object, take `session_id` from the tail and
-   `read_file("~/.claude-hc/sessions/SESSION_ID/latest.json")`.
+   `terminal(command="cat ~/.claude-hc/sessions/SESSION_ID/latest.json")`.
 5. Branch on `status`:
    - `done`: step 9.
    - `needs_input`: apply "Answer-or-relay rule". Answering: step 6.
