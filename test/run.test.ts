@@ -128,6 +128,26 @@ test("resuming a busy session exits 3 without touching files or calling query", 
   assert.equal(store.readLatest("s6"), null);
 });
 
+test("a fresh session that loses the lock race exits 3 without writing a result or touching the lock", async () => {
+  const { store, deps, params } = setup([
+    { kind: "init", sessionId: "s11" },
+    { kind: "text", text: "should never be processed" },
+    { kind: "result", subtype: "success" },
+  ]);
+  store.ensureSessionDir("s11");
+  writeFileSync(store.lockPath("s11"), JSON.stringify({ pid: process.pid, started_at: "2026-09-08T00:00:00.000Z", turn: 1 }));
+  const result = await runTurn(params, deps);
+  assert.equal(result.exit_code, 3);
+  assert.equal(result.status, "error");
+  assert.equal(result.error?.code, "session_busy");
+  assert.equal(result.turn, null);
+  assert.equal(result.result_file, null);
+  assert.equal(result.session_id, "s11");
+  assert.equal(store.readLatest("s11"), null);
+  const lock = store.readLock("s11");
+  assert.equal(lock?.pid, process.pid);
+});
+
 test("resuming numbers turns and passes resume to the SDK", async () => {
   const { store, fake, deps, params } = setup([
     { kind: "init", sessionId: "s7" },
