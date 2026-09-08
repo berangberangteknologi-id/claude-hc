@@ -62,6 +62,16 @@ claude-hc "fix the failing test" --allowed-tools Read,Edit,Bash
 
 # Continue a previous session (session_id is printed to stderr on exit)
 claude-hc "now also add a test for that" -r <session_id>
+
+# Machine-readable mode: one JSON line as the last line of stdout
+claude-hc --json --cwd /path/to/repo "brainstorm a caching layer" --allowed-tools Read,Glob,Grep
+
+# Feed the prompt through stdin (safest when it contains quotes or newlines)
+claude-hc --json --cwd /path/to/repo < prompt.txt
+
+# Is a turn still running on this session? What did the last one produce?
+claude-hc status <session_id>
+claude-hc wait <session_id> --timeout 170
 ```
 
 ### Answering questions programmatically
@@ -88,11 +98,18 @@ you're done — there's no special "interactive mode" to opt into or out of.
 | Flag | Description |
 |---|---|
 | `-r, --resume <session_id>` | Resume a specific session by its `session_id`. |
+| `--json` | Print one JSON line as the last line of stdout instead of streaming text. See [JSON mode](#json-mode). |
+| `--cwd <dir>` | Working directory for the Claude session (default: current directory). |
 | `--allowed-tools <a,b,c>` | Comma-separated tools the agent may use without prompting (default: `Read,Write,Edit,Bash,Glob,Grep`). `AskUserQuestion` is always handled separately and doesn't need to be listed. |
 | `--disallowed-tools <a,b,c>` | Comma-separated tools to block. See [Known limitations](#known-limitations) — this is the flag that's actually enforced. |
 | `--model <name>` | Model to use (e.g. `claude-sonnet-5`). |
 | `--max-turns <n>` | Cap on tool-use round-trips. |
 | `-h, --help` | Show help. |
+
+| Subcommand | Description |
+|---|---|
+| `status <session_id>` | Print whether a turn is in flight (with its pid) and the latest result. |
+| `wait <session_id> [--timeout <s>]` | Block until no turn is in flight or the timeout (default 170 s) passes, then print the status. Exit 3 while still in flight. |
 
 There is no "resume last session" flag — `-r` always takes an explicit
 `session_id`. "Most recent session in this directory" is inherently
@@ -103,9 +120,55 @@ directory, so that mode isn't offered at all.
 
 | Code | Meaning |
 |---|---|
-| `0` | Success. |
-| `1` | The agent's turn ended in a non-success result (e.g. hit `--max-turns`), or claude-hc itself threw an error. |
-| `2` | The session ended without ever producing a result message — the turn's actual outcome is unknown. See [Known limitations](#known-limitations). |
+| `0` | Success: the agent answered or asked a question (check `status` in JSON mode). |
+| `1` | Non-success result (e.g. `--max-turns` hit), usage error, or a claude-hc error. |
+| `2` | The session ended without ever producing a result message — the turn's outcome is unknown. See [Known limitations](#known-limitations). |
+| `3` | Session busy: another claude-hc process holds this session's lock. Use `claude-hc wait`. |
+
+### JSON mode
+
+With `--json`, streaming text is suppressed and the last line of stdout is one
+JSON object (progress still goes to stderr):
+
+```json
+{"claude_hc":1,"status":"needs_input","turn":2,"summary":"Two approaches fit...",
+ "questions":[{"header":"Auth method","question":"Which auth method should we use?",
+  "options":[{"label":"OAuth","description":"Browser login"},{"label":"API key","description":"Static key"}],
+  "multiSelect":false}],
+ "result_subtype":"success","exit_code":0,"error":null,
+ "session_id":"9f2c...","result_file":"/Users/you/.claude-hc/sessions/9f2c.../turn-0002.json"}
+```
+
+`status` is `done`, `needs_input`, or `error`; `questions` mirrors the
+`AskUserQuestion` input; `error` is `null` or `{"code","message"}` with codes
+`session_busy`, `no_result_message`, `non_success_result`, `usage`,
+`exception`. `session_id` and `result_file` are the last keys so a truncated
+tail still ends with them.
+
+### Result files and the session lock
+
+Every turn (JSON or text mode) writes
+`$CLAUDE_HC_HOME/sessions/<session_id>/turn-NNNN.json` and a `latest.json`
+copy with the full text, the questions, timing, and cost. `CLAUDE_HC_HOME`
+defaults to `~/.claude-hc`. A `lock` file in the same directory holds the pid
+of the running turn; resuming a session while its lock pid is alive fails
+with exit code 3 instead of interleaving two turns into one transcript. Stale
+locks (dead pid) are cleared automatically.
+
+## Driving claude-hc from another agent (Hermes)
+
+`hermes/skills/claude-hc/SKILL.md` is a Hermes Agent skill that runs
+claude-hc as a background process, polls or gets notified when a turn ends,
+relays Claude's questions to the human (through the Kanban board or
+`clarify`), and resumes with `-r`. Install it on each Hermes profile that
+needs it:
+
+```bash
+hermes -p <profile> skills install berangberangteknologi-id/claude-hc/hermes/skills/claude-hc
+```
+
+It requires Hermes v0.21.1 or newer. The design behind it is in
+`docs/superpowers/specs/2026-09-08-hermes-claude-hc-integration-design.md`.
 
 ## How it works
 
@@ -127,6 +190,9 @@ directory, so that mode isn't offered at all.
   Code session (e.g. spawned via that session's own Bash tool) isn't
   recognized as a "child" of it. stdio stays attached to the same terminal —
   no new window is opened.
+- **Session lock and result files**: a turn holds `~/.claude-hc/sessions/<id>/lock`
+  while it runs and writes `turn-NNNN.json` plus `latest.json` when it ends,
+  so an orchestrator can always find out what happened without parsing prose.
 
 ## Known limitations
 

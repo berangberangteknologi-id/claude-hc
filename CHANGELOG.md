@@ -5,6 +5,40 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-09-08
+
+### Added
+
+- `--json`: one machine-readable JSON line as the last line of stdout with
+  `status` (`done` / `needs_input` / `error`), the `AskUserQuestion`
+  questions verbatim, a 300-character summary, the session id, and the result
+  file path. Streaming text is suppressed in this mode; progress still goes
+  to stderr.
+- Result files: every turn writes
+  `$CLAUDE_HC_HOME/sessions/<session_id>/turn-NNNN.json` and `latest.json`
+  (`CLAUDE_HC_HOME` defaults to `~/.claude-hc`).
+- Session lock: resuming a session while another claude-hc process is still
+  running it fails fast with the new exit code `3` (`session_busy`) instead of
+  interleaving two turns into one transcript. Stale locks are cleared
+  automatically; the lock is released on SIGINT/SIGTERM.
+- `claude-hc status <session_id>` and `claude-hc wait <session_id> [--timeout s]`.
+- `--cwd <dir>` to bind the Claude session to a repository regardless of the
+  launch directory.
+- The wrapper process now forwards SIGINT/SIGTERM to the worker.
+- A Hermes Agent skill (`hermes/skills/claude-hc/SKILL.md`) that drives
+  claude-hc from Kanban workers and chat sessions, and `scripts/hermes-sim.sh`,
+  a contract test that plays the Hermes side against real Claude
+  (`CLAUDE_HC_E2E=1 npm run test:e2e`).
+- Unit tests (`npm test`) with an injectable fake `query()`.
+
+### Changed
+
+- `src/claude-hc.ts` is now only the entry point; behavior moved to
+  `cli.ts`, `run.ts`, `session-store.ts`, and `output.ts`. Text-mode output
+  is unchanged.
+
+[0.4.0]: https://github.com/berangberangteknologi-id/claude-hc/compare/v0.3.0...v0.4.0
+
 ## [0.3.0] - 2026-08-27
 
 ### Added
