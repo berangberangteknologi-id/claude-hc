@@ -3,13 +3,14 @@
 // (the agent can ask you a clarifying question instead of silently
 // guessing, which is what plain `claude -p` does).
 //
-// Every invocation is one-shot, same as `-p`: it prints text and exits.
-// That includes clarifying questions — a question is just another piece of
-// text output, and answering it means running claude-hc again with -r
-// <session_id> and the answer as the new prompt. There is no mode where the
-// process stays alive waiting for input.
+// Every invocation is one-shot, same as `-p`: it prints text (or, with
+// --json, one JSON line) and exits. A clarifying question is just another
+// piece of output; answering it means running claude-hc again with
+// -r <session_id> and the answer as the new prompt.
 //
-// Run `claude-hc --help` for the full option list.
+// This file is only the entry point: re-exec guard, signal handling, real
+// dependencies. The behavior lives in cli.ts, run.ts, session-store.ts and
+// output.ts. Run `claude-hc --help` for the option list.
 //
 // Auth prerequisites (uses your Pro/Max subscription, not pay-per-token API
 // billing):
@@ -21,28 +22,25 @@
 // IMPORTANT caveat about --allowed-tools (confirmed through direct testing):
 // query() boots your local Claude Code installation as-is, including every
 // globally-enabled plugin/MCP server — it is not a clean SDK-only sandbox.
-// If your global settings (~/.claude/settings.json) have something like
-// "skipDangerousModePermissionPrompt": true, a tool that is NOT in
-// --allowed-tools/--disallowed-tools can still run without ever reaching
-// canUseTool below — the deny-by-default behavior here for non-AskUserQuestion
-// tools is best-effort, NOT a security boundary you can rely on in that kind
-// of environment. AskUserQuestion itself was confirmed to always route
-// through canUseTool consistently. If you need a tool to actually be
-// blocked, use --disallowed-tools — that was confirmed to be honored
-// (a different mechanism from simply omitting a tool from --allowed-tools).
+// A tool that is NOT in --allowed-tools/--disallowed-tools can still run in
+// permissive setups; if you need a tool blocked, use --disallowed-tools.
 
-import { query, type SDKMessage, type CanUseTool } from "@anthropic-ai/claude-agent-sdk";
-import type { AskUserQuestionInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { spawn } from "node:child_process";
+import { statSync } from "node:fs";
+import { main, parseArgs } from "./cli.js";
+import { releaseActiveLock } from "./run.js";
+import { SessionStore, resolveHome } from "./session-store.js";
 
-const DEFAULT_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const pkg = require("../package.json") as { version: string };
 
-// claude-hc always re-execs itself once as a fresh child process with the
+// claude-hc re-execs itself once as a fresh child process with the
 // environment stripped of CLAUDE_CODE_* variables, so that query() inside it
 // is not recognized as a "child" of whatever live Claude Code session called
-// it (e.g. via its Bash tool) — separate, not nested. stdio stays 'inherit'
-// (same terminal) so output streams normally without needing a new window.
-// Guarded by CLAUDE_HC_DETACHED so it only re-execs once.
+// it. stdio stays 'inherit' so stdin redirects and output work normally.
+// Guarded by CLAUDE_HC_DETACHED so it only re-execs once. status/wait/help
+// never need the SDK, so they skip the re-exec.
 const DETACH_MARKER = "CLAUDE_HC_DETACHED";
 const ENV_VARS_TO_STRIP = [
   "CLAUDECODE",
@@ -62,11 +60,19 @@ function relaunchDetached(): void {
   for (const key of ENV_VARS_TO_STRIP) delete cleanEnv[key];
   cleanEnv[DETACH_MARKER] = "1";
 
-  const child = spawn(
-    process.execPath,
-    [...process.execArgv, __filename, ...process.argv.slice(2)],
-    { env: cleanEnv, stdio: "inherit", detached: true },
-  );
+  const child = spawn(process.execPath, [...process.execArgv, __filename, ...process.argv.slice(2)], {
+    env: cleanEnv,
+    stdio: "inherit",
+    detached: true,
+  });
+
+  // Forward termination to the worker so a plain `kill <wrapper pid>` stops
+  // the turn instead of orphaning it.
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => {
+      child.kill(signal);
+    });
+  }
 
   child.on("exit", (code, signal) => {
     if (signal) {
@@ -82,106 +88,6 @@ function relaunchDetached(): void {
   });
 }
 
-const HELP_TEXT = `claude-hc — headless Claude Code that can still ask clarifying questions
-
-USAGE:
-  claude-hc "prompt text" [options]
-  echo "prompt text" | claude-hc [options]
-
-OPTIONS:
-  -r, --resume <session_id>   Resume a specific session by its session_id.
-  --allowed-tools <a,b,c>     Comma-separated list of tools the agent may use
-                              (default: ${DEFAULT_ALLOWED_TOOLS.join(",")})
-                              "AskUserQuestion" is always routed through
-                              canUseTool, so it doesn't need to (and can't) be
-                              listed here.
-  --disallowed-tools <a,b,c>  Comma-separated list of tools to block
-  --model <name>              Model to use (e.g. claude-sonnet-5)
-  --max-turns <n>             Cap on tool-use round-trips
-  -h, --help                  Show this help
-
-NOTES:
-  - Tools in --allowed-tools are auto-approved without asking (same as 'claude -p').
-  - IMPORTANT: --allowed-tools is NOT a fully reliable security sandbox.
-    query() loads your local Claude Code install as-is (every active
-    plugin/MCP server). If your global ~/.claude/settings.json has a
-    permissive setting (e.g. "skipDangerousModePermissionPrompt": true), a
-    tool NOT in --allowed-tools can still run without ever going through the
-    permission check here. If you need a tool truly blocked, use
-    --disallowed-tools — that one was confirmed to be honored in testing.
-  - Every invocation is one-shot: claude-hc prints text and exits, the same
-    shape whether that text is a normal answer or a clarifying question. When
-    the agent calls AskUserQuestion, the question and its options are printed
-    and the call is denied (with a message telling the model the question has
-    already been shown and it should end its turn) — the process then exits
-    normally, same as any other response. To answer, run claude-hc again with
-    -r <session_id> and your answer as the new prompt.
-  - session_id is printed to stderr at the end so it can be used with -r.
-    An explicit session_id is the only way to continue a session — this
-    avoids ever guessing "the most recent session", which is inherently
-    ambiguous when multiple Claude Code sessions share a working directory.
-  - claude-hc always re-execs itself once as a child process with the
-    environment stripped of CLAUDE_CODE_* variables, so it isn't recognized
-    as a "child" of any live Claude Code session that invoked it.`;
-
-interface Args {
-  prompt: string | undefined;
-  resumeId: string | undefined;
-  allowedTools: string[];
-  disallowedTools: string[] | undefined;
-  model: string | undefined;
-  maxTurns: number | undefined;
-  help: boolean;
-}
-
-function parseArgs(argv: string[]): Args {
-  const args: Args = {
-    prompt: undefined,
-    resumeId: undefined,
-    allowedTools: DEFAULT_ALLOWED_TOOLS,
-    disallowedTools: undefined,
-    model: undefined,
-    maxTurns: undefined,
-    help: false,
-  };
-
-  const positional: string[] = [];
-
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    switch (arg) {
-      case "-h":
-      case "--help":
-        args.help = true;
-        break;
-      case "-r":
-      case "--resume":
-        args.resumeId = argv[++i];
-        break;
-      case "--allowed-tools":
-        args.allowedTools = argv[++i]?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
-        break;
-      case "--disallowed-tools":
-        args.disallowedTools = argv[++i]?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
-        break;
-      case "--model":
-        args.model = argv[++i];
-        break;
-      case "--max-turns": {
-        const raw = argv[++i];
-        const n = raw ? Number(raw) : NaN;
-        if (Number.isFinite(n)) args.maxTurns = n;
-        break;
-      }
-      default:
-        positional.push(arg);
-    }
-  }
-
-  args.prompt = positional.join(" ").trim() || undefined;
-  return args;
-}
-
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return "";
   const chunks: Buffer[] = [];
@@ -189,140 +95,74 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8").trim();
 }
 
-function printAskUserQuestion(input: AskUserQuestionInput): void {
-  for (const q of input.questions) {
-    console.log(`\n${q.header ? `[${q.header}] ` : ""}${q.question}`);
-    q.options.forEach((opt, idx) => {
-      console.log(`  ${idx + 1}. ${opt.label}${opt.description ? ` — ${opt.description}` : ""}`);
-    });
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
   }
 }
 
-const canUseTool: CanUseTool = async (toolName, input) => {
-  if (toolName === "AskUserQuestion") {
-    // Print the question the same way we always have, but don't block
-    // waiting for a reply here — deny immediately so this turn ends and
-    // claude-hc exits normally, same as any plain-text response. The answer
-    // comes back as a new prompt in a follow-up invocation with -r.
-    printAskUserQuestion(input as unknown as AskUserQuestionInput);
-    return {
-      behavior: "deny",
-      message: "Already shown to the user above — their reply will be your next message. End your turn now.",
-    };
-  }
-  // Tools actually in --allowed-tools are bare-listed, so the SDK
-  // auto-approves them and never invokes this callback for them at all.
-  // Reaching this branch means toolName was NOT in --allowed-tools —
-  // deny it, matching `-p` semantics (only explicitly allowed tools run).
-  return {
-    behavior: "deny",
-    message: `Tool "${toolName}" is not in --allowed-tools.`,
-  };
-};
+function finish(code: number, lastLine?: string): void {
+  // The write callback fires after every earlier stdout write has been
+  // flushed, so the JSON line is always complete before the process exits.
+  // The timer is a backstop in case the callback never fires (closed pipe).
+  setTimeout(() => process.exit(code), 1000).unref();
+  process.stdout.write(lastLine !== undefined ? lastLine + "\n" : "", () => process.exit(code));
+}
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-
-  if (args.help) {
-    console.log(HELP_TEXT);
-    process.exit(0);
-  }
+async function run(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const parsed = parseArgs(argv);
 
   // Check this BEFORE relaunchDetached() — CLAUDE_CODE_SESSION_ID is only
-  // visible in the original process (not yet stripped). If this process is
-  // itself a child of a live Claude Code session, and -r targets exactly
-  // that live session's session_id, refuse — resuming into the live session
-  // that spawned us could corrupt its transcript.
+  // visible in the original process. Resuming into the live session that
+  // spawned us could corrupt its transcript.
   const liveSessionId = process.env.CLAUDE_CODE_SESSION_ID;
-  if (liveSessionId && args.resumeId === liveSessionId) {
+  if (liveSessionId && parsed.resumeId === liveSessionId) {
     console.error(
-      `[claude-hc] -r ${args.resumeId} refused: that is the session_id of the live Claude ` +
+      `[claude-hc] -r ${parsed.resumeId} refused: that is the session_id of the live Claude ` +
         "Code session currently running this process. Resuming into the live session that " +
         "spawned us could corrupt its transcript.",
     );
     process.exit(1);
   }
 
-  if (process.env[DETACH_MARKER] !== "1") {
+  if (parsed.command === "turn" && process.env[DETACH_MARKER] !== "1") {
     relaunchDetached();
     return;
   }
 
-  const prompt = args.prompt ?? (await readStdin());
-  if (!prompt) {
-    console.error(`Usage: claude-hc "prompt" [-r <session_id>] [--allowed-tools a,b,c] [--model name] [--max-turns n]`);
-    console.error("Run `claude-hc --help` for details.");
-    process.exit(1);
-  }
+  // Release our session lock on termination so a resumed worker is never
+  // blocked by a dead pid longer than one liveness probe.
+  process.on("SIGINT", () => {
+    releaseActiveLock();
+    process.exit(130);
+  });
+  process.on("SIGTERM", () => {
+    releaseActiveLock();
+    process.exit(143);
+  });
 
-  // AskUserQuestion is deliberately NOT included in allowedTools: the SDK
-  // auto-approves (and skips canUseTool for) any tool name that's bare-listed
-  // there. By leaving it out of allowedTools/disallowedTools, calls to this
-  // tool always fall through to canUseTool below, where we actually handle it.
-  const allowedTools = args.allowedTools.filter((t) => t !== "AskUserQuestion");
-
-  let sessionId: string | undefined;
-  let sawResult = false;
-  let exitCode = 0;
-
-  try {
-    const stream = query({
-      prompt,
-      options: {
-        allowedTools,
-        ...(args.disallowedTools ? { disallowedTools: args.disallowedTools } : {}),
-        ...(args.model ? { model: args.model } : {}),
-        ...(args.maxTurns !== undefined ? { maxTurns: args.maxTurns } : {}),
-        ...(args.resumeId ? { resume: args.resumeId } : {}),
-        canUseTool,
-      },
-    }) as AsyncIterable<SDKMessage>;
-
-    for await (const message of stream) {
-      if (message.type === "system" && message.subtype === "init") {
-        sessionId = message.session_id;
-      } else if (message.type === "assistant") {
-        for (const block of message.message.content) {
-          if (block.type === "text") {
-            process.stdout.write(block.text);
-          } else if (block.type === "tool_use") {
-            console.error(`\n[claude-hc] using tool: ${block.name}`);
-          }
-        }
-      } else if (message.type === "result") {
-        sawResult = true;
-        process.stdout.write("\n");
-        if (message.subtype !== "success") {
-          console.error(`[claude-hc] stopped: ${message.subtype}`);
-          exitCode = 1;
-        }
-      }
-    }
-
-    // The SDK's async iterable can complete without ever yielding a `result`
-    // message — observed in the field during long tool calls with no output
-    // (root cause unconfirmed; possibly an idle timeout upstream of the SDK
-    // dropping the connection mid-turn, see README). No exception is thrown
-    // in that case, so without this check the loop above would just exit
-    // silently with exitCode still at 0 — indistinguishable from a real
-    // success. Surface it as a distinct, non-zero exit code instead.
-    if (!sawResult) {
-      console.error(
-        "[claude-hc] the session ended without a result message — the turn's actual " +
-          "outcome is unknown (possibly killed mid-turn during a long silent tool call; " +
-          "see README's Known limitations). Re-run with -r to see if the session can " +
-          "still be resumed.",
-      );
-      exitCode = 2;
-    }
-  } catch (err) {
-    console.error("[claude-hc] error:", err);
-    exitCode = 1;
-  } finally {
-    if (sessionId) console.error(`[claude-hc] session_id: ${sessionId}`);
-  }
-
-  process.exit(exitCode);
+  const result = await main(argv, {
+    query: (params) => query(params),
+    store: new SessionStore(resolveHome()),
+    stdout: (chunk) => {
+      process.stdout.write(chunk);
+    },
+    stderr: (chunk) => {
+      process.stderr.write(chunk);
+    },
+    readStdin,
+    defaultCwd: () => process.cwd(),
+    isDirectory,
+    version: pkg.version,
+    now: () => new Date(),
+  });
+  finish(result.code, result.lastLine);
 }
 
-main();
+run().catch((err) => {
+  console.error("[claude-hc] error:", err);
+  process.exit(1);
+});
