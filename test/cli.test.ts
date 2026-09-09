@@ -64,6 +64,13 @@ test("parseArgs: defaults and help", () => {
   assert.equal(parseArgs(["-h"]).command, "help");
 });
 
+test("default allowed tools include mcp__* so already-connected MCP servers work without extra flags", () => {
+  // Found via a real end-to-end Hermes-driven run: an MCP server (Playwright)
+  // was globally connected but its tools were denied because the default
+  // --allowed-tools only ever listed the six built-ins.
+  assert.ok(DEFAULT_ALLOWED_TOOLS.includes("mcp__*"));
+});
+
 test("parseArgs: status and wait subcommands", () => {
   const s = parseArgs(["status", "sess-1"]);
   assert.equal(s.command, "status");

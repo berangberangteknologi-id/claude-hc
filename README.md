@@ -100,7 +100,7 @@ you're done — there's no special "interactive mode" to opt into or out of.
 | `-r, --resume <session_id>` | Resume a specific session by its `session_id`. |
 | `--json` | Print one JSON line as the last line of stdout instead of streaming text. See [JSON mode](#json-mode). |
 | `--cwd <dir>` | Working directory for the Claude session (default: current directory). |
-| `--allowed-tools <a,b,c>` | Comma-separated tools the agent may use without prompting (default: `Read,Write,Edit,Bash,Glob,Grep`). `AskUserQuestion` is always handled separately and doesn't need to be listed. |
+| `--allowed-tools <a,b,c>` | Comma-separated tools the agent may use without prompting (default: `Read,Write,Edit,Bash,Glob,Grep,mcp__*` — the `mcp__*` covers every MCP server already connected in this environment, project `.mcp.json`, user settings, or plugins, without listing servers individually). `AskUserQuestion` is always handled separately and doesn't need to be listed. Passing your own `--allowed-tools` replaces the default outright — include `mcp__*` or `mcp__<server>` in it to keep MCP tools available. |
 | `--disallowed-tools <a,b,c>` | Comma-separated tools to block. See [Known limitations](#known-limitations) — this is the flag that's actually enforced. |
 | `--model <name>` | Model to use (e.g. `claude-sonnet-5`). |
 | `--max-turns <n>` | Cap on tool-use round-trips. |

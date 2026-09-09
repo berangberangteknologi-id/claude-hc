@@ -8,6 +8,7 @@ import {
   extractQuestions,
   filterNewQuestions,
   formatQuestionsText,
+  isToolAllowed,
 } from "../src/output.js";
 import type { Question, TurnResult } from "../src/types.js";
 
@@ -107,6 +108,24 @@ test("filterNewQuestions drops exact duplicates and keeps first-occurrence order
   const colorMultiSelect: Question = { ...color, multiSelect: true };
   const third = filterNewQuestions([colorMultiSelect], seen);
   assert.deepEqual(third, [colorMultiSelect]);
+});
+
+test("isToolAllowed matches exact names and MCP wildcard/server patterns", () => {
+  const builtins = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "mcp__*"];
+  assert.equal(isToolAllowed("Bash", builtins), true);
+  assert.equal(isToolAllowed("Task", builtins), false);
+  // "mcp__*" covers every MCP tool from every connected server.
+  assert.equal(isToolAllowed("mcp__plugin_playwright_playwright__browser_navigate", builtins), true);
+  assert.equal(isToolAllowed("mcp__anything__at_all", builtins), true);
+  // A server-scoped entry only covers that server, with or without "__*".
+  const oneServer = ["Read", "mcp__github"];
+  assert.equal(isToolAllowed("mcp__github__create_issue", oneServer), true);
+  assert.equal(isToolAllowed("mcp__github", oneServer), true);
+  assert.equal(isToolAllowed("mcp__gitlab__create_issue", oneServer), false);
+  const oneServerStar = ["mcp__github__*"];
+  assert.equal(isToolAllowed("mcp__github__create_issue", oneServerStar), true);
+  // No MCP entry at all: MCP tools are denied same as any other unlisted tool.
+  assert.equal(isToolAllowed("mcp__github__create_issue", ["Read", "Bash"]), false);
 });
 
 test("buildJsonLine emits one line with keys in the contract order", () => {

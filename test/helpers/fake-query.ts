@@ -6,6 +6,7 @@ export type FakeStep =
   | { kind: "text"; text: string }
   | { kind: "tool"; name: string }
   | { kind: "ask"; input: unknown }
+  | { kind: "toolcall"; name: string; input?: Record<string, unknown> }
   | { kind: "result"; subtype: string }
   | { kind: "throw"; message: string }
   | { kind: "end" };
@@ -54,6 +55,23 @@ export function makeFakeQuery(steps: FakeStep[]): FakeQuery {
             const canUseTool = params.options?.canUseTool;
             if (canUseTool) {
               const res = await canUseTool("AskUserQuestion", step.input as Record<string, unknown>, {
+                signal: new AbortController().signal,
+                suggestions: [],
+              } as never);
+              fake.permissionResults.push(res);
+            }
+            break;
+          }
+          case "toolcall": {
+            const toolInput = step.input ?? {};
+            yield {
+              type: "assistant",
+              session_id: sessionIdOf(),
+              message: { role: "assistant", content: [{ type: "tool_use", id: "tu_call", name: step.name, input: toolInput }] },
+            } as unknown as SDKMessage;
+            const canUseTool = params.options?.canUseTool;
+            if (canUseTool) {
+              const res = await canUseTool(step.name, toolInput, {
                 signal: new AbortController().signal,
                 suggestions: [],
               } as never);

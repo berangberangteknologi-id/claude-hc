@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] - 2026-09-10
+
+### Fixed
+
+- `--allowed-tools`' default (`Read,Write,Edit,Bash,Glob,Grep`) never covered
+  MCP server tools, so an already-connected MCP server (e.g. Playwright) was
+  silently unusable — every call denied with "not in --allowed-tools" —
+  unless the caller happened to know and list its exact tool names. Found
+  via a real end-to-end Hermes-driven Kanban worker run: it drove claude-hc
+  through an implementation task that required Playwright browser
+  verification, hit this denial, diagnosed the cause itself (`claude mcp
+  list` showed Playwright connected; reading `cli.ts`/`run.ts` showed the
+  fixed six-tool default), and worked around it with an explicit
+  `--allowed-tools` flag before this fix existed.
+  The default now adds `mcp__*`. Getting this actually working took two
+  parts, not one: the SDK's own bare-`allowedTools` shadow of `canUseTool`
+  turned out to do only literal-string matching for the top-level
+  `Options.allowedTools` — confirmed by a live run where "mcp__*" was
+  present but a real Playwright tool call still reached `canUseTool` and
+  got denied — so `canUseTool` (`src/run.ts`) now applies the pattern
+  itself via a new `isToolAllowed` (`src/output.ts`), which also
+  recognizes `mcp__<server>` and `mcp__<server>__*` for scoping to one
+  server. Re-verified live end-to-end after the fix: an unmodified
+  `claude-hc` invocation drove Playwright to navigate to a real page and
+  read its title back, with no `--allowed-tools` override. A caller who
+  passes their own `--allowed-tools` still needs to include `mcp__*` (or a
+  narrower `mcp__<server>`) themselves, since the flag replaces the default
+  outright rather than adding to it.
+
 ## [0.4.1] - 2026-09-09
 
 ### Fixed

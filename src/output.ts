@@ -56,6 +56,25 @@ export function filterNewQuestions(candidates: Question[], seen: Set<string>): Q
   return fresh;
 }
 
+/**
+ * Whether `toolName` is covered by an entry in `allowedTools`. Exact names
+ * match literally (e.g. "Bash"); MCP tool names (`mcp__<server>__<tool>`)
+ * also match the server-level and blanket patterns Claude Code's own
+ * permission rules use: "mcp__*" (every MCP tool from every connected
+ * server), "mcp__<server>" or "mcp__<server>__*" (every tool from one
+ * server). This exists because the SDK's own bare-`allowedTools` shadow of
+ * `canUseTool` only does literal matching for the top-level `Options.allowedTools`
+ * (confirmed by a live run: listing "mcp__*" there still let a real MCP tool
+ * call reach `canUseTool`) — so `canUseTool` has to apply these patterns
+ * itself rather than assume the SDK already screened for them.
+ */
+export function isToolAllowed(toolName: string, allowedTools: string[]): boolean {
+  if (allowedTools.includes(toolName)) return true;
+  if (!toolName.startsWith("mcp__")) return false;
+  const server = toolName.slice("mcp__".length).split("__")[0];
+  return allowedTools.includes("mcp__*") || allowedTools.includes(`mcp__${server}`) || allowedTools.includes(`mcp__${server}__*`);
+}
+
 /** Text-mode rendering, byte-for-byte the v0.3.0 layout. */
 export function formatQuestionsText(questions: Question[]): string {
   let out = "";

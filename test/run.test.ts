@@ -241,6 +241,42 @@ test("json mode writes nothing to stdout during the turn", async () => {
   assert.deepEqual(out, []);
 });
 
+test("canUseTool allows an MCP tool covered by an mcp__* allowedTools entry", async () => {
+  // Regression test for a real end-to-end finding: an already-connected MCP
+  // server (Playwright) was denied because the SDK's own bare-allowedTools
+  // shadow of canUseTool only matches literal names, not "mcp__*" — so
+  // canUseTool has to apply that pattern itself.
+  const { fake, deps, params } = setup(
+    [
+      { kind: "init", sessionId: "s12" },
+      { kind: "toolcall", name: "mcp__plugin_playwright_playwright__browser_navigate", input: { url: "https://example.com" } },
+      { kind: "result", subtype: "success" },
+    ],
+    { allowedTools: ["Read", "mcp__*"] },
+  );
+  await runTurn(params, deps);
+  assert.deepEqual(fake.permissionResults[0], {
+    behavior: "allow",
+    updatedInput: { url: "https://example.com" },
+  });
+});
+
+test("canUseTool still denies a tool not covered by any allowedTools entry", async () => {
+  const { fake, deps, params } = setup(
+    [
+      { kind: "init", sessionId: "s13" },
+      { kind: "toolcall", name: "mcp__github__create_issue" },
+      { kind: "result", subtype: "success" },
+    ],
+    { allowedTools: ["Read"] },
+  );
+  await runTurn(params, deps);
+  assert.deepEqual(fake.permissionResults[0], {
+    behavior: "deny",
+    message: 'Tool "mcp__github__create_issue" is not in --allowed-tools.',
+  });
+});
+
 test("releaseActiveLock is a no-op after a completed turn", async () => {
   const { deps, params } = setup([
     { kind: "init", sessionId: "s10" },

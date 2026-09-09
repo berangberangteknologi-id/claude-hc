@@ -4,7 +4,7 @@ import type { QueryFn, TurnDeps } from "./run.js";
 import type { SessionStore } from "./session-store.js";
 import type { ErrorCode, TurnResult } from "./types.js";
 
-export const DEFAULT_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
+export const DEFAULT_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "mcp__*"];
 export const DEFAULT_WAIT_TIMEOUT_S = 170;
 
 export const HELP_TEXT = `claude-hc — headless Claude Code that can still ask clarifying questions
@@ -48,6 +48,11 @@ EXIT CODES:
 
 NOTES:
   - Tools in --allowed-tools are auto-approved without asking (same as 'claude -p').
+  - The default --allowed-tools includes "mcp__*", so tools from any MCP server
+    already connected in this environment (project .mcp.json, user settings,
+    plugins) are usable without listing them individually. Passing your own
+    --allowed-tools replaces the default outright, so include "mcp__*" (or a
+    narrower "mcp__<server>") in it if you still want MCP tools.
   - IMPORTANT: --allowed-tools is NOT a fully reliable security sandbox. If you need a
     tool truly blocked, use --disallowed-tools.
   - Every invocation is one-shot: claude-hc prints and exits, whether the output is a
