@@ -13,7 +13,7 @@ test("SKILL.md has the required frontmatter", () => {
   const front = text.slice(4, end);
   assert.match(front, /^name: claude-hc$/m);
   assert.match(front, /^description: .+/m);
-  assert.match(front, /^version: 1\.1\.0$/m);
+  assert.match(front, /^version: 1\.1\.1$/m);
   assert.match(front, /^\s+tags: \[.*Kanban.*\]$/m);
   assert.match(front, /^\s+related_skills: \[claude-code, hermes-agent\]$/m);
   assert.match(front, /^\s+requires_tools: \[terminal\]$/m);
@@ -48,4 +48,9 @@ test("SKILL.md never passes a shell variable as workdir and never uses pty", () 
   assert.ok(text.includes("process_manage"));
   assert.ok(text.includes("--json"));
   assert.ok(text.includes("kind=\"needs_input\""));
+});
+
+test("SKILL.md warns against kanban_heartbeat outside a Kanban worker", () => {
+  const text = readFileSync(skillPath, "utf8");
+  assert.ok(text.includes("Never call `kanban_heartbeat` unless `HERMES_KANBAN_TASK` is set"));
 });

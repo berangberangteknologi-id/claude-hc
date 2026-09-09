@@ -1,7 +1,7 @@
 ---
 name: claude-hc
 description: Run Claude Code headlessly with claude-hc and drive its clarifying questions (brainstorming, design interviews) from Kanban workers or chat sessions.
-version: 1.1.0
+version: 1.1.1
 author: berangberangteknologi
 license: MIT
 platforms: [macos, linux]
@@ -223,6 +223,14 @@ Direct use:
 1. Write the prompt to `DIR/.claude-hc/prompt.txt`, then
    `terminal(command="claude-hc --json --cwd DIR < DIR/.claude-hc/prompt.txt", background=true, notify=true, workdir=DIR)`
    and end your turn. Say that Claude is working and you will report back.
+
+   If you cannot rely on being woken later (a one-shot invocation such as
+   `hermes chat -q`, or you choose not to end your turn), launch without
+   `notify` instead and poll in a loop with
+   `process_manage(action="wait", session_id=<proc id>, timeout=180)` exactly
+   as Procedure A step 3 — except never call `kanban_heartbeat` here; that
+   tool needs a Kanban task and errors outside one (see Pitfalls). A long
+   wait needs no liveness signal, just keep waiting.
 2. The completion arrives as `[IMPORTANT: Background process ... Output: <tail>]`.
    Parse the last line as JSON (or read `latest.json` for the session id in
    the tail).
@@ -289,6 +297,10 @@ only what the repository and the task description cannot answer.
 - Never use a pseudo-terminal or stdin writes; claude-hc reads the answer as
   a new prompt, not from a live stdin.
 - Never pass `notify` inside a Kanban worker; it is refused there. Poll.
+- Never call `kanban_heartbeat` unless `HERMES_KANBAN_TASK` is set (Procedure
+  A only) — outside a Kanban worker there is no task to heartbeat and the
+  call errors ("task_id is required"). A long wait in Procedure B needs no
+  liveness signal; just keep waiting.
 - `session_busy` (exit 3) means another turn is running; wait, do not retry.
 - Exit code 2 means the outcome is unknown; resume with `-r`.
 - A cut JSON line is normal in a 2000-character tail; `latest.json` has it all.

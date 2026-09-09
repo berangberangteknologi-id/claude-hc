@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   early. Added a "Recognizing a checkpoint disguised as `done`" section with
   the heuristic and a 3-repeat loop guard, and updated both procedures'
   branching to use it. Also found via a real end-to-end run.
+- Hermes skill, `1.1.1`: a chat-relay session driving claude-hc without a
+  Kanban task reflexively called `kanban_heartbeat` during a long wait and
+  hit `task_id is required` — observed in the same end-to-end run.
+  `kanban_heartbeat` needs a Kanban task and only ever applied to
+  Procedure A; Procedure B's "Direct use" now explicitly covers the case
+  that caused it (a one-shot caller, e.g. `hermes chat -q`, that can't rely
+  on `notify` waking a later turn and must poll instead) and says plainly
+  that a long wait needs no liveness signal there. Added the same rule to
+  Pitfalls.
 
 ## [0.4.0] - 2026-09-08
 
