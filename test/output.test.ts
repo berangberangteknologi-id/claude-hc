@@ -6,6 +6,7 @@ import {
   collapseSummary,
   deriveStatus,
   extractQuestions,
+  filterNewQuestions,
   formatQuestionsText,
 } from "../src/output.js";
 import type { Question, TurnResult } from "../src/types.js";
@@ -89,6 +90,23 @@ test("deriveStatus follows exit code first, then questions", () => {
   assert.equal(deriveStatus(0, twoQuestions), "needs_input");
   assert.equal(deriveStatus(1, twoQuestions), "error");
   assert.equal(deriveStatus(3, []), "error");
+});
+
+test("filterNewQuestions drops exact duplicates and keeps first-occurrence order", () => {
+  const seen = new Set<string>();
+  const color = twoQuestions[0];
+  const scope = twoQuestions[1];
+  const colorAgain: Question = JSON.parse(JSON.stringify(color)); // same content, different object identity
+
+  const first = filterNewQuestions([color, scope], seen);
+  assert.deepEqual(first, [color, scope]);
+
+  const second = filterNewQuestions([colorAgain, scope], seen);
+  assert.deepEqual(second, []);
+
+  const colorMultiSelect: Question = { ...color, multiSelect: true };
+  const third = filterNewQuestions([colorMultiSelect], seen);
+  assert.deepEqual(third, [colorMultiSelect]);
 });
 
 test("buildJsonLine emits one line with keys in the contract order", () => {

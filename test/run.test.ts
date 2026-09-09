@@ -58,7 +58,11 @@ test("a plain turn ends done with exit 0 and a result file", async () => {
   assert.equal(store.readLock("s1"), null);
 });
 
-test("an AskUserQuestion call yields needs_input, denies the tool, and keeps all questions", async () => {
+test("an AskUserQuestion call yields needs_input, denies the tool, and dedupes identical repeated questions", async () => {
+  // The underlying model sometimes calls AskUserQuestion twice with identical
+  // content in one turn before actually ending it, despite the deny message
+  // telling it to stop (observed in practice) — both calls must still be
+  // denied, but the caller should see the question only once.
   const { fake, deps, params } = setup([
     { kind: "init", sessionId: "s2" },
     { kind: "text", text: "Let me ask." },
@@ -70,10 +74,54 @@ test("an AskUserQuestion call yields needs_input, denies the tool, and keeps all
   const result = await runTurn(params, deps);
   assert.equal(result.status, "needs_input");
   assert.equal(result.exit_code, 0);
-  assert.equal(result.questions.length, 2);
+  assert.equal(result.questions.length, 1);
   assert.equal(result.questions[0].header, "Color");
   assert.equal(result.summary, "Waiting for your answer.");
   assert.deepEqual(fake.permissionResults[0], { behavior: "deny", message: DENY_MESSAGE });
+  assert.deepEqual(fake.permissionResults[1], { behavior: "deny", message: DENY_MESSAGE });
+});
+
+test("distinct AskUserQuestion calls in one turn are all collected, not deduped", async () => {
+  const secondAsk = {
+    questions: [
+      {
+        header: "Size",
+        question: "Which size?",
+        options: [
+          { label: "Small", description: "" },
+          { label: "Large", description: "" },
+        ],
+        multiSelect: false,
+      },
+    ],
+  };
+  const { deps, params } = setup([
+    { kind: "init", sessionId: "s2b" },
+    { kind: "ask", input: askInput },
+    { kind: "ask", input: secondAsk },
+    { kind: "result", subtype: "success" },
+  ]);
+  const result = await runTurn(params, deps);
+  assert.equal(result.status, "needs_input");
+  assert.equal(result.questions.length, 2);
+  assert.equal(result.questions[0].header, "Color");
+  assert.equal(result.questions[1].header, "Size");
+});
+
+test("text mode does not print a duplicated question block twice", async () => {
+  const { out, deps, params } = setup(
+    [
+      { kind: "init", sessionId: "s2c" },
+      { kind: "ask", input: askInput },
+      { kind: "ask", input: askInput },
+      { kind: "result", subtype: "success" },
+    ],
+    { jsonMode: false },
+  );
+  await runTurn(params, deps);
+  const stdout = out.join("");
+  const occurrences = stdout.split("Which color?").length - 1;
+  assert.equal(occurrences, 1);
 });
 
 test("a stream that ends without a result exits 2", async () => {

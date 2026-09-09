@@ -31,6 +31,31 @@ export function extractQuestions(input: unknown): Question[] {
   });
 }
 
+/** Stable identity for a question's exact content. */
+function questionKey(q: Question): string {
+  return JSON.stringify(q);
+}
+
+/**
+ * Filter out any question whose exact content already appears in `seen`,
+ * adding newly-seen ones to `seen` as it goes. The underlying model
+ * sometimes calls AskUserQuestion twice with identical content in one turn
+ * before actually ending it, despite the deny message telling it to stop
+ * (observed in practice) — call this once per AskUserQuestion batch across a
+ * turn so the caller only collects and displays each distinct question once,
+ * in first-occurrence order.
+ */
+export function filterNewQuestions(candidates: Question[], seen: Set<string>): Question[] {
+  const fresh: Question[] = [];
+  for (const q of candidates) {
+    const key = questionKey(q);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    fresh.push(q);
+  }
+  return fresh;
+}
+
 /** Text-mode rendering, byte-for-byte the v0.3.0 layout. */
 export function formatQuestionsText(questions: Question[]): string {
   let out = "";

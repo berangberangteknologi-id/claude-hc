@@ -1,5 +1,5 @@
 import type { CanUseTool, Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { collapseSummary, deriveStatus, extractQuestions, formatQuestionsText } from "./output.js";
+import { collapseSummary, deriveStatus, extractQuestions, filterNewQuestions, formatQuestionsText } from "./output.js";
 import type { SessionStore } from "./session-store.js";
 import type { Question, TurnError, TurnRecord, TurnResult } from "./types.js";
 
@@ -87,6 +87,7 @@ export async function runTurn(params: TurnParams, deps: TurnDeps): Promise<TurnR
   }
 
   const questions: Question[] = [];
+  const seenQuestionKeys = new Set<string>();
   const allText: string[] = [];
   let lastMessageText = "";
   let sawResult = false;
@@ -100,8 +101,9 @@ export async function runTurn(params: TurnParams, deps: TurnDeps): Promise<TurnR
   const canUseTool: CanUseTool = async (toolName, input) => {
     if (toolName === "AskUserQuestion") {
       const extracted = extractQuestions(input);
-      questions.push(...extracted);
-      if (!params.jsonMode) deps.stdout(formatQuestionsText(extracted));
+      const fresh = filterNewQuestions(extracted, seenQuestionKeys);
+      questions.push(...fresh);
+      if (!params.jsonMode && fresh.length > 0) deps.stdout(formatQuestionsText(fresh));
       return { behavior: "deny", message: DENY_MESSAGE };
     }
     return { behavior: "deny", message: `Tool "${toolName}" is not in --allowed-tools.` };

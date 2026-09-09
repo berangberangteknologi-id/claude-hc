@@ -1,7 +1,7 @@
 ---
 name: claude-hc
 description: Run Claude Code headlessly with claude-hc and drive its clarifying questions (brainstorming, design interviews) from Kanban workers or chat sessions.
-version: 1.0.0
+version: 1.1.0
 author: berangberangteknologi
 license: MIT
 platforms: [macos, linux]
@@ -72,6 +72,11 @@ Exit codes: `0` answered or asked (check `status`), `1` non-success result or
 error, `2` stream ended without a result (resume with `-r`), `3` session busy
 (another claude-hc process holds the session; use `claude-hc wait`).
 
+`status: "done"` means only that the turn ended without calling
+`AskUserQuestion` — it does not by itself mean the requested work is
+finished. See "Recognizing a checkpoint disguised as done" below before
+treating a `done` turn as terminal.
+
 `claude-hc status SESSION_ID` prints
 `{"claude_hc":1,"session_id":...,"in_flight":true|false,"pid":...,"last":{...latest.json...}}`.
 
@@ -83,6 +88,35 @@ Answers from the user:
 [<header>] <question> -> <label>, <label>
 <optional free text the user added>
 ```
+
+## Recognizing a checkpoint disguised as `done`
+
+`status: "done"` means only that the turn ended without calling
+`AskUserQuestion` — not that the requested work is finished. Skills like
+`superpowers:brainstorming` often end a turn with a plain-text proposal,
+approach, or "does this look right?" checkpoint instead of a formal
+question, because not every pause for feedback is phrased as a question.
+Treating every `done` as terminal stops the interview one round too early.
+
+Read `summary` (or the full text in `result_file` when `summary` was cut)
+before deciding:
+
+- **Genuinely finished**: describes work already done, in the past tense —
+  files it wrote, tests it ran, "implementation complete," a spec path.
+  Report it; go to the completion step.
+- **A checkpoint**: presents a design, an approach, a plan, or a section of
+  one, and invites a reaction — even without a literal question mark.
+
+For a checkpoint, apply "Answer-or-relay rule" exactly as for `needs_input`:
+reply yourself with a specific affirmative ("Approved, proceed.", or
+something more specific if the text asks something concrete) or relay to
+the human, write the reply to the prompt file, and resume with `-r` — same
+mechanics as answering a real question.
+
+Guard against looping forever on a genuinely stuck session: if the same
+checkpoint repeats three times in a row (same `summary`, or no new files
+appear between resumes), stop treating it as a checkpoint — relay it to the
+human (or block the card) instead of resuming again.
 
 ## Procedure A: Kanban worker
 
@@ -109,7 +143,9 @@ a worker, so poll; block the card when the human must decide.
    complete object, take `session_id` from the tail and
    `terminal(command="cat \"${CLAUDE_HC_HOME:-$HOME/.claude-hc}/sessions/SESSION_ID/latest.json\"")`.
 5. Branch on `status`:
-   - `done`: step 9.
+   - `done`: if the text is a checkpoint, not a finished deliverable (see
+     "Recognizing a checkpoint disguised as done"), treat it exactly like
+     `needs_input` below. Otherwise, step 9.
    - `needs_input`: apply "Answer-or-relay rule". Answering: step 6.
      Relaying: step 8.
    - `error` with `no_result_message`, or `non_success_result` where
@@ -129,10 +165,12 @@ a worker, so poll; block the card when the human must decide.
    `terminal(command="claude-hc status SESSION_ID", timeout=30)`. If
    `in_flight` is true, run `claude-hc wait SESSION_ID --timeout 170` in the
    background and wait on it until `in_flight` is false. Then read `last`:
-   if its `status` is `done`, go to step 9. Otherwise the answer is the newest
-   comment after the marker that was not written by this profile
-   (`HERMES_PROFILE`); convert it to the answer text and go to step 6. If no
-   such comment exists, post the question comment again and block (step 8).
+   if its `status` is `done` and the text is a finished deliverable, not a
+   checkpoint (see "Recognizing a checkpoint disguised as done"), go to
+   step 9. Otherwise the answer is the newest comment after the marker that
+   was not written by this profile (`HERMES_PROFILE`); convert it to the
+   answer text and go to step 6. If no such comment exists, post the
+   question (or checkpoint) comment again and block (step 8).
 8. Relay to the human: post one `kanban_comment` with the template below,
    then block and stop:
    ```
@@ -199,7 +237,10 @@ Direct use:
    `DIR/.claude-hc/prompt.txt`, and launch the `-r` turn with `notify=true`.
 4. `needs_input` and the rule says answer: write the answer text and launch
    the `-r` turn.
-5. `done`: report `summary` and any spec path from `result_file`.
+5. `done`: if the text is a checkpoint, not a finished deliverable (see
+   "Recognizing a checkpoint disguised as done"), treat it exactly like
+   `needs_input` above (step 3 or 4). Otherwise, report `summary` and any
+   spec path from `result_file`.
 6. `error`: same table as Procedure A step 5, but tell the human instead of
    blocking a card; `session_busy` means wait with `claude-hc wait`.
 

@@ -13,7 +13,7 @@ test("SKILL.md has the required frontmatter", () => {
   const front = text.slice(4, end);
   assert.match(front, /^name: claude-hc$/m);
   assert.match(front, /^description: .+/m);
-  assert.match(front, /^version: 1\.0\.0$/m);
+  assert.match(front, /^version: 1\.1\.0$/m);
   assert.match(front, /^\s+tags: \[.*Kanban.*\]$/m);
   assert.match(front, /^\s+related_skills: \[claude-code, hermes-agent\]$/m);
   assert.match(front, /^\s+requires_tools: \[terminal\]$/m);
@@ -25,6 +25,7 @@ test("SKILL.md has every section the design requires, in order", () => {
     "## When to use",
     "## Prerequisites",
     "## Contract cheat sheet",
+    "## Recognizing a checkpoint disguised as `done`",
     "## Procedure A: Kanban worker",
     "## Procedure B: chat relay",
     "## Answer-or-relay rule",

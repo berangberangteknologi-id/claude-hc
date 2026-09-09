@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-09-09
+
+### Fixed
+
+- Duplicate `AskUserQuestion` calls with identical content in one turn (the
+  underlying model sometimes calls it twice before actually ending its turn,
+  despite the deny message telling it to stop) are now deduped: the `--json`
+  `questions` array and the text-mode question block each show the question
+  once, not once per call. Found via a real end-to-end Hermes-driven run,
+  not code review.
+- Hermes skill (`hermes/skills/claude-hc/SKILL.md`, now `1.1.0`): a `"done"`
+  status means the turn ended without calling `AskUserQuestion` — it does
+  not mean the requested work is finished. Skills like
+  `superpowers:brainstorming` often end a turn with a plain-text proposal
+  awaiting feedback instead of a formal question, so a Hermes worker that
+  treated every `"done"` as terminal stopped the interview one round too
+  early. Added a "Recognizing a checkpoint disguised as `done`" section with
+  the heuristic and a 3-repeat loop guard, and updated both procedures'
+  branching to use it. Also found via a real end-to-end run.
+
 ## [0.4.0] - 2026-09-08
 
 ### Added
